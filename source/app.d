@@ -10,7 +10,7 @@ import std.path;
 
 uint wait_s = 0;
 
-immutable string BEEP_WAV = "~/.config/beep.wav";
+immutable string BEEP_WAV = "~/.local/share/beep/beep.wav";
 
 bool convertString(string _str)
 {
