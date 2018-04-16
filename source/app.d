@@ -1,95 +1,131 @@
 import std.stdio;
 import std.string;
-import std.ascii;
 import std.conv;
+import std.ascii;
 import std.datetime;
-import core.thread;
-import std.process;
 import std.file;
 import std.path;
+import std.process;
+import core.thread;
 
-uint wait_s = 0;
+import deimos.ncurses;
 
-immutable string BEEP_WAV = "~/.local/share/beep/beep.wav";
+const string SOUND_PATH = "~/.config/beep/beep.wav";
 
-bool convertString(string _str)
+void playSound()
 {
-    assert(!_str.empty());
-    _str = _str.toLower();
-    char last = _str[$-1];
+    if(!exists(expandTilde(SOUND_PATH))) {
+        writeln("[ERROR] need sound:", SOUND_PATH);
+        return;
+    }
+
+    string cmd = "mpv --idle --no-audio-display " ~ SOUND_PATH ~ " > /dev/null 2> /dev/null";
+    spawnShell(cmd);    
+    writeln("BEEP");
+}
+
+Duration calcArgs(string args)
+{
+    Duration ret;
+    args = args.toLower();
+    char last = args[$-1];
+
     if(!isAlpha(last)) {
-        wait_s += to!int(_str);
-        return true;   
-    } 
-        
-    if(_str.length < 2 )
-        return false;
-    string number = _str[0 .. $-1];
+        ret += dur!"seconds"(to!int(args));
+        return ret;   
+    }
+
+    if(args.length < 2 )
+        return ret;
+    string number = args[0 .. $-1];
     if(!number.isNumeric())
-        return false;        
+        return ret;        
     int num = to!int(number);
     if(num <= 0)
-        return false;
-    switch(last) {
-        case 'h': 
-            wait_s += num * 60 * 60;
+        return ret;
+    switch(last)
+    {
+        case 'h':             
+            ret += dur!"hours"(num);
             break;
         case 'm': 
-            wait_s += num * 60;
+            ret += dur!"minutes"(num);
             break;        
         case 's': 
-            wait_s += num;
+            ret += dur!"seconds"(num);
             break;
         default:
-            return false;
+            return ret;
     }        
-    return true;
+
+    return ret;
 }
 
-int main(string[] args)
-{         
-    if(!exists(expandTilde(BEEP_WAV))) {
-        writeln("[ERROR] need sound:", BEEP_WAV);
-        return 1;
+class Timer
+{
+    SysTime startTime;
+    Duration allTime;
+    Duration leftTime;
+
+    this(Duration timer) {
+        startTime = Clock.currTime;
+        allTime = timer;
+        leftTime = timer;
     }
-    
-    MonoTime start = MonoTime.currTime;    
-    string head;
-    
-    if(args.length > 1) 
-    {        
-        foreach(arg; args[1 .. $])
-            if(!convertString(arg)){
-                writeln("[ERROR] wrong argument: ", arg);
-                return 2;
-            }                      
+
+    bool update()
+    {
+        Duration timeElapsed = Clock.currTime - startTime;
+        leftTime = allTime - timeElapsed;        
+
+        if(leftTime <= dur!"seconds"(0))
+            return false;
+
+        return true;
+    }
+
+    int getPercent()
+    {
+        long left = to!long(leftTime.total!"seconds"());
+        long all = to!long(allTime.total!"seconds"());        
+        return 100 - (100 * left / all);
+    }
+}
+
+void view(Timer timer)
+{    
+    initscr();     // initialize the screen
+    scope (exit)
+    endwin();  // always exit cleanly
+
+
+    while(timer.update()) 
+    {
+        string percent = to!string(timer.getPercent());
+        string allTime = "All: " ~ timer.allTime.toString();
+        string leftTime = "Left: " ~ timer.leftTime.toString();
+
+        clear();
+        printw(toStringz(percent));
+        printw("%\n");
+        printw(toStringz(allTime));
+        printw("\n");
+        printw(toStringz(leftTime));
+        printw("\n");
+
+        refresh();
+        Thread.sleep( dur!("msecs")( 500 ) );
     }
         
-    while(true)
-    {                                
-        MonoTime after = MonoTime.currTime;  
-        Duration timeElapsed = after - start;
-        if(timeElapsed >= wait_s.seconds())
-            break;
-        Duration last = wait_s.seconds() - timeElapsed;
-        string lastStr = last.toString();        
-        writeln("Last: ", lastStr);        
-        Thread.sleep( dur!("msecs")( 800 ) );
-    }                                            
-    	
-    string cmd = "aplay " ~ BEEP_WAV;
-    writeln(cmd);
-    executeShell(cmd);    
-    return 0;
+    endwin();                    
 }
 
-unittest {
-    assert(convertString("10") == true);
-    assert(wait_s == 10);
-    assert(convertString("1h") == true);
-    assert(wait_s == 3610);
-    assert(convertString("1m") == true);
-    assert(wait_s == 3670);
-    assert(convertString("1s") == true);
-    assert(wait_s == 3671);
+void main(string[] args)
+{
+    if(args.length > 1) {
+        auto timer = new Timer(calcArgs(args[1]));
+        view(timer);
+    }
+    
+    playSound();
 }
